@@ -1404,6 +1404,71 @@ class Xcelium(Simulator):
         return cmds
 
 
+class VCS(Simulator):
+    supported_gpi_interfaces = {"verilog": ["vpi"]}
+
+    @staticmethod
+    def _simulator_in_path() -> None:
+        if shutil.which("vcs") is None:
+            raise SystemExit("ERROR: vsim executable not found!")
+
+    @staticmethod
+    def _get_include_options(includes: Sequence[PathLike]) -> Command:
+        return [f"+incdir+{as_tcl_value(str(include))}" for include in includes]
+
+    @staticmethod
+    def _get_define_options(defines: Mapping[str, object]) -> Command:
+        return [
+            f"+define+{as_tcl_value(name)}={as_tcl_value(str(value))}"
+            for name, value in defines.items()
+        ]
+
+    @staticmethod
+    def _get_parameter_options(parameters: Mapping[str, object]) -> Command:
+        return [f"-pvalue+{name}={value}" for name, value in parameters.items()]
+
+    def _build_command(self) -> List[Command]:
+        for source in self.sources:
+            if not is_verilog_source(source):
+                raise ValueError(
+                    f"{type(self).__qualname__} only supports Verilog. {str(source)!r} cannot be compiled."
+                )
+        for arg in self.build_args:
+            if type(arg) not in (str, Verilog):
+                print(
+                    f"WARNING: {type(self).__qualname__} only supports Verilog. build_args {arg!r} will not be applied."
+                )
+
+        cmds = [
+            ["vcs"]
+            + ["-debug_access+r+w-memcbk"],
+            + ["-debug_region+cell"],
+            + ["+vpi"],
+            + ["-sverilog"],
+            + ["-timescale=" + f"{self.timescale[0]}/{self.timescale[1]}"],
+            + ["-debug"],
+            + ["-load", cocotb_tools.config.lib_name_path("vpi", "riviera").as_posix()],
+            + self._get_include_options(self.includes),
+            + self._get_define_options(self.defines),
+            + self._get_parameter_options(self.parameters),
+            + ["-top", self.hdl_toplevel],
+            + [str(source_file) for source_file in self.sources]
+        ]
+
+        return cmds
+
+    def _test_command(self) -> List[Command]:
+        if self.pre_cmd:
+            self.pre_cmd = ["-do"] + self.pre_cmd
+        
+        cmds = [
+            ["./simv"],
+            + self.test_args,
+            + self.plusargs
+        ]
+        return cmds
+
+
 def get_runner(simulator_name: str) -> Simulator:
     """Return an instance of a runner for *simulator_name*.
 
@@ -1423,6 +1488,7 @@ def get_runner(simulator_name: str) -> Simulator:
         "xcelium": Xcelium,
         "nvc": Nvc,
         # TODO: "vcs": Vcs,
+        "vcs": VCS,
         # TODO: "activehdl": ActiveHdl,
     }
     try:
